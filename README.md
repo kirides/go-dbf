@@ -50,6 +50,43 @@ if err != nil {
 }
 ```
 
+## Extened fieldnames from DBC
+### Quick and easy
+```go
+// Read the accompanying DBC file
+err := db.ReadDBC()
+```
+
+### Pre-read a DBC for reuse with multiple tables
+```go
+// Read a DBC that lies relative to a .dbf
+dbc, err := dbf.ReadDBC(filepath.Join(`location/of/dbf/`), db.DBC()), charmap.Windows1252.NewDecoder())
+
+err := db.ReadFromDBC(dbc)
+```
+Example of reusing a dbc
+
+```go
+knownDbcs := make(map[string]*dbf.Dbc)
+dec := charmap.Windows1252.NewDecoder()
+
+db, _ := dbf.Open(`...`, dec)
+
+if db.DBC() != "" {
+    if d, ok := knownDbcs[db.DBC()]; ok {
+        db.ReadFromDBC(d)
+    } else {
+        dbc, err := dbf.ReadDBC(
+                    filepath.Join(
+                        filepath.Dir(dbfPath), db.DBC()),
+                    dec)
+        // ...
+        db.ReadFromDBC(dbc)
+        knownDbcs[db.DBC()] = dbc
+    }
+}
+```
+
 ## Mapped datatypes
 - `C` -> string
 - `M` -> string
