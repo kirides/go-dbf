@@ -74,7 +74,7 @@ func (r *simpleRecord) ToMap() (map[string]interface{}, error) {
 			m[f.Name] = julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement:]))
 		case 'L':
 			v := r.buffer[f.Displacement]
-			if v > 0 {
+			if v != 32 && v > 0 {
 				m[f.Name] = true
 			} else {
 				m[f.Name] = false
@@ -177,7 +177,7 @@ func (r *nullRecord) ToMap() (map[string]interface{}, error) {
 			}
 		case 'L':
 			v := r.buffer[f.Displacement]
-			if v > 0 {
+			if v != 32 && v > 0 {
 				m[f.Name] = true
 			} else {
 				m[f.Name] = false
