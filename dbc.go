@@ -17,7 +17,7 @@ func ReadDBC(path string, decoder *encoding.Decoder) (*Dbc, error) {
 	tables := make(map[string][]string)
 	tablesByID := make(map[uint32]string)
 
-	dbcDbf.Scan(func(r Record) error {
+	dbcDbf.Scan(func(r *Record) error {
 		if !r.Deleted() {
 			m, err := r.ToMap()
 			if err != nil {

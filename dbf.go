@@ -160,20 +160,18 @@ const (
 )
 
 // RecordAt reads the record at the specified position
-func (dbf *Dbf) RecordAt(recno uint32, handle func(Record), options ParseOption) error {
+func (dbf *Dbf) RecordAt(recno uint32, handle func(*Record), options ParseOption) error {
 	if recno >= dbf.header.RecordCount {
 		return ErrInvalidRecordNumber
 	}
 
 	var err error
 	buffer := make([]byte, dbf.header.RecordLength)
-	r := &nullRecord{
-		simpleRecord: simpleRecord{
-			recno:        recno,
-			dbf:          dbf,
-			buffer:       buffer,
-			parseOptions: options,
-		},
+	r := &Record{
+		recno:        recno,
+		dbf:          dbf,
+		buffer:       buffer,
+		parseOptions: options,
 	}
 
 	if dbf.memoFile != "" {
@@ -200,16 +198,14 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(Record), options ParseOption)
 }
 
 // ScanOffset walks the table starting at `offset` until the end or walk returns a non nil error
-func (dbf *Dbf) ScanOffset(offset uint32, walk func(Record) error, options ParseOption) error {
+func (dbf *Dbf) ScanOffset(offset uint32, walk func(*Record) error, options ParseOption) error {
 	var err error
 	buffer := make([]byte, dbf.header.RecordLength)
-	r := &nullRecord{
-		simpleRecord: simpleRecord{
-			recno:        0,
-			dbf:          dbf,
-			buffer:       buffer,
-			parseOptions: options,
-		},
+	r := &Record{
+		recno:        0,
+		dbf:          dbf,
+		buffer:       buffer,
+		parseOptions: options,
 	}
 
 	if dbf.memoFile != "" {
@@ -241,7 +237,7 @@ func (dbf *Dbf) ScanOffset(offset uint32, walk func(Record) error, options Parse
 }
 
 // Scan walks the entire table until the end or walk returns a non nil error
-func (dbf *Dbf) Scan(walk func(Record) error, options ParseOption) error {
+func (dbf *Dbf) Scan(walk func(*Record) error, options ParseOption) error {
 	return dbf.ScanOffset(0, walk, options)
 }
 

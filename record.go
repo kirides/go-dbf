@@ -11,13 +11,7 @@ import (
 )
 
 // Record provides methods to work with record
-type Record interface {
-	Recno() uint32
-	Deleted() bool
-	ToMap() (map[string]interface{}, error)
-}
-
-type simpleRecord struct {
+type Record struct {
 	recno   uint32
 	deleted bool
 
@@ -28,22 +22,12 @@ type simpleRecord struct {
 	memoBlockSize int64
 	read          bool
 	parseOptions  ParseOption
-}
 
-func (r *simpleRecord) Recno() uint32 {
-	return r.recno
-}
-func (r *simpleRecord) parse() {
-	if r.read {
-		return
-	}
-	r.dbf.dbfFile.Read(r.buffer)
-
-	r.read = true
+	nullFlags uint64
 }
 
 // Deleted returns a bool that tells if a record is marked as deleted or not
-func (r *simpleRecord) Deleted() bool {
+func (r *Record) Deleted() bool {
 	if !r.read {
 		r.parse()
 	}
@@ -51,88 +35,12 @@ func (r *simpleRecord) Deleted() bool {
 	return r.buffer[0] == 0x2A
 }
 
-// ToMap parses the record into a map[string]interface{}
-func (r *simpleRecord) ToMap() (map[string]interface{}, error) {
-	var err error
-	if !r.read {
-		r.parse()
-	}
-	m := make(map[string]interface{})
-	trimRight := (r.parseOptions & ParseTrimRight) != 0
-
-	for _, f := range r.dbf.fields {
-		// Skip internal columns
-		if (f.Flags & FieldFlagSystem) != 0 {
-			continue
-		}
-
-		switch f.Type {
-		case 'I':
-			m[f.Name] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
-		case 'C':
-			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
-			if trimRight {
-				v = strings.TrimRight(v, " ")
-			}
-			m[f.Name] = v
-		case 'D':
-			m[f.Name], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
-		case 'T':
-			m[f.Name] = julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement:]))
-		case 'L':
-			v := r.buffer[f.Displacement]
-			if v != 32 && v > 0 {
-				m[f.Name] = true
-			} else {
-				m[f.Name] = false
-			}
-		case 'N':
-			if f.DecimalCount == 0 {
-				m[f.Name], _ = strconv.ParseInt(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 10, 64)
-			} else {
-				m[f.Name], _ = strconv.ParseFloat(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 64)
-			}
-		case 'M':
-			offset := binary.LittleEndian.Uint32(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
-			if offset == 0 {
-				m[f.Name] = ""
-				continue
-			}
-			_, err = r.memoFile.Seek(4+int64(offset)*r.memoBlockSize, io.SeekStart)
-			if err != nil {
-				return nil, err
-			}
-			intBuf := make([]byte, 4, 4)
-			_, err = r.memoFile.Read(intBuf)
-			if err != nil {
-				return nil, err
-			}
-			memoSize := int(binary.BigEndian.Uint32(intBuf))
-			if memoSize == 0 {
-				m[f.Name] = ""
-				continue
-			}
-			if len(r.memoBuffer) < memoSize {
-				r.memoBuffer = make([]byte, memoSize, memoSize)
-			}
-			_, err = r.memoFile.Read(r.memoBuffer[:memoSize])
-			if err != nil {
-				return nil, err
-			}
-			m[f.Name], err = r.dbf.decoder.String(string(r.memoBuffer[:memoSize]))
-		}
-	}
-
-	return m, nil
+// Recno returns the record number for the current record
+func (r *Record) Recno() uint32 {
+	return r.recno
 }
 
-type nullRecord struct {
-	simpleRecord
-
-	nullFlags uint64
-}
-
-func (r *nullRecord) parse() {
+func (r *Record) parse() {
 	if r.read {
 		return
 	}
@@ -148,7 +56,7 @@ func (r *nullRecord) parse() {
 }
 
 // ToMap parses the record into a map[string]interface{}
-func (r *nullRecord) ToMap() (map[string]interface{}, error) {
+func (r *Record) ToMap() (map[string]interface{}, error) {
 	var err error
 	if !r.read {
 		r.parse()
@@ -222,6 +130,87 @@ func (r *nullRecord) ToMap() (map[string]interface{}, error) {
 				return nil, err
 			}
 			m[f.Name], err = r.dbf.decoder.String(string(r.memoBuffer[:memoSize]))
+		}
+	}
+
+	return m, nil
+}
+
+// ToSlice parses the record into a []interface{}
+func (r *Record) ToSlice() ([]interface{}, error) {
+	var err error
+	if !r.read {
+		r.parse()
+	}
+	m := make([]interface{}, len(r.dbf.fields))
+	trimRight := (r.parseOptions & ParseTrimRight) != 0
+
+	for i, f := range r.dbf.fields {
+		// Skip internal columns
+		if (f.Flags & FieldFlagSystem) != 0 {
+			continue
+		}
+		if f.NullFieldIndex != -1 {
+			if (r.nullFlags & (1 << f.NullFieldIndex)) != 0 {
+				m[i] = nil
+				continue
+			}
+		}
+
+		switch f.Type {
+		case 'I':
+			m[i] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
+		case 'C':
+			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			if trimRight {
+				v = strings.TrimRight(v, " ")
+			}
+			m[i] = v
+		case 'D':
+			m[i], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
+		case 'T':
+			m[i] = julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement:]))
+		case 'N':
+			if f.DecimalCount == 0 {
+				m[i], _ = strconv.ParseInt(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 10, 64)
+			} else {
+				m[i], _ = strconv.ParseFloat(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 64)
+			}
+		case 'L':
+			v := r.buffer[f.Displacement]
+			if v != 32 && v > 0 {
+				m[i] = true
+			} else {
+				m[i] = false
+			}
+		case 'M':
+			offset := binary.LittleEndian.Uint32(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
+			if offset == 0 {
+				m[i] = ""
+				continue
+			}
+			_, err = r.memoFile.Seek(4+int64(offset)*r.memoBlockSize, io.SeekStart)
+			if err != nil {
+				return nil, err
+			}
+			intBuf := make([]byte, 4, 4)
+			_, err = r.memoFile.Read(intBuf)
+			if err != nil {
+				return nil, err
+			}
+			memoSize := int(binary.BigEndian.Uint32(intBuf))
+			if memoSize == 0 {
+				m[i] = ""
+				continue
+			}
+			if len(r.memoBuffer) < memoSize {
+				r.memoBuffer = make([]byte, memoSize, memoSize)
+			}
+			_, err = r.memoFile.Read(r.memoBuffer[:memoSize])
+			if err != nil {
+				return nil, err
+			}
+			m[i], err = r.dbf.decoder.String(string(r.memoBuffer[:memoSize]))
 		}
 	}
 

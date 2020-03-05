@@ -23,7 +23,7 @@ func Test_LargeDbf(t *testing.T) {
 		t.FailNow()
 	}
 
-	err = tbl.Scan(func(r Record) error {
+	err = tbl.Scan(func(r *Record) error {
 		if !r.Deleted() {
 			r.ToMap()
 			// m, _ := r.ToMap()
@@ -48,7 +48,7 @@ func Test_RecordAt(t *testing.T) {
 		t.FailNow()
 	}
 
-	err = tbl.RecordAt(2, func(r Record) {
+	err = tbl.RecordAt(2, func(r *Record) {
 		if !r.Deleted() {
 			r.ToMap()
 			// m, _ := r.ToMap()
