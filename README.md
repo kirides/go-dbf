@@ -56,6 +56,7 @@ if err != nil {
 - `D` -> time.Time (in local timezone)
 - `T` -> time.Time (in local timezone)
 - `I` -> uint32
+- `L` -> bool
 - `N`
     - No decimals: int64
     - Decimals: float64
