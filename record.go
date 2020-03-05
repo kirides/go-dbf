@@ -175,6 +175,13 @@ func (r *nullRecord) ToMap() (map[string]interface{}, error) {
 			} else {
 				m[f.Name], _ = strconv.ParseFloat(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 64)
 			}
+		case 'L':
+			v := r.buffer[f.Displacement]
+			if v > 0 {
+				m[f.Name] = true
+			} else {
+				m[f.Name] = false
+			}
 		case 'M':
 			offset := binary.LittleEndian.Uint32(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
 			if offset == 0 {
