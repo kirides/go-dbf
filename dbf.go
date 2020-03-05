@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/exp/mmap"
 	"golang.org/x/text/encoding"
 )
 
@@ -18,29 +19,79 @@ const maxBacklinkLenght = 263
 // ErrInvalidRecordNumber is returned whenever a provided record number is invalid
 var ErrInvalidRecordNumber = errors.New("Invalid record")
 
+type backingTable interface {
+	io.ReaderAt
+	io.Closer
+	Len() int
+}
+
+type backingFile struct {
+	*os.File
+	currentOffset int64
+}
+
+func (f *backingFile) Len() int {
+	stat, err := f.Stat()
+	if err != nil {
+		return -1
+	}
+	return int(stat.Size())
+}
+func (f *backingFile) ReadAt(buffer []byte, offset int64) (int, error) {
+	if f.currentOffset != offset {
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			return 0, err
+		}
+		f.currentOffset = offset
+	}
+	r, err := f.Read(buffer)
+	if err != nil {
+		return r, err
+	}
+	f.currentOffset += int64(r)
+	return r, nil
+}
+
 // Dbf provides methods to access a DBF
 type Dbf struct {
 	recpointer int32
-	dbfFile    *os.File
-	memoFile   string
-	decoder    *encoding.Decoder
+	dbfFile    backingTable
 
+	memoFile string
+	decoder  *encoding.Decoder
+
+	path      string
 	header    Header
 	fields    []Field
 	backlink  string
 	nullField *Field
 }
 
+var UseMmap = false
+
 // Open opens the specifid DBF
 func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
-	dbfFile, err := os.Open(path)
-	if err != nil {
-		return nil, err
+	var err error
+	var dbfFile backingTable
+	if UseMmap {
+		dbfFile, err = mmap.Open(path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		osF, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		dbfFile = &backingFile{File: osF}
 	}
 
 	dbfHeader := Header{}
 
-	if err := binary.Read(dbfFile, binary.LittleEndian, &dbfHeader); err != nil {
+	buffer := make([]byte, 31, 31)
+	dbfFile.ReadAt(buffer, 0)
+
+	if err := binary.Read(bytes.NewReader(buffer), binary.LittleEndian, &dbfHeader); err != nil {
 		dbfFile.Close()
 		return nil, fmt.Errorf("Could not open table at %q. %w", path, err)
 	}
@@ -66,6 +117,7 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 		fields:   fields,
 		backlink: backlink,
 		decoder:  decoder,
+		path:     path,
 	}
 	for _, f := range dbf.fields {
 		if f.Name == "_NullFlags" {
@@ -88,6 +140,11 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 	return &dbf, nil
 }
 
+// Name returns the path that was provided for this table
+func (dbf *Dbf) Name() string {
+	return dbf.path
+}
+
 // DBC returns the DBF's DBC
 func (dbf *Dbf) DBC() string {
 	if (dbf.header.Flags & FlagDBC) == 0 {
@@ -103,7 +160,7 @@ func (dbf *Dbf) ReadDBC() error {
 		return fmt.Errorf("This table does not belong to a DBC")
 	}
 
-	absPath, err := filepath.Abs(dbf.dbfFile.Name())
+	absPath, err := filepath.Abs(dbf.Name())
 	if err != nil {
 		return err
 	}
@@ -123,7 +180,7 @@ func (dbf *Dbf) ReadFromDBC(db *Dbc) error {
 		return fmt.Errorf("This table does not belong to a DBC")
 	}
 
-	tblName := filepath.Base(dbf.dbfFile.Name())
+	tblName := filepath.Base(dbf.Name())
 	tblName = tblName[:strings.LastIndex(tblName, ".")]
 	fields, err := db.TableFields(strings.ToUpper(tblName))
 	if err != nil {
@@ -180,10 +237,6 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(Record)) error {
 		}
 		r.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
 	}
-	_, err = dbf.dbfFile.Seek(int64(dbf.header.HeaderSize)+(int64(dbf.header.RecordLength)*int64(recno)), io.SeekStart)
-	if err != nil {
-		return fmt.Errorf("Invalid record pointer. %w", err)
-	}
 	handle(r)
 	return nil
 }
@@ -213,14 +266,10 @@ func (dbf *Dbf) Scan(walk func(Record) error) error {
 		r.memoFile.Read(intBuf)
 		r.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
 	}
-	dbf.dbfFile.Seek(int64(dbf.header.HeaderSize), io.SeekStart)
 
 	for i := uint32(0); i < dbf.header.RecordCount; i++ {
 		if err = walk(r); err != nil {
 			break
-		}
-		if !r.read {
-			dbf.dbfFile.Seek(int64(dbf.header.RecordLength), io.SeekCurrent)
 		}
 		r.recno = i
 		r.read = false
@@ -230,11 +279,7 @@ func (dbf *Dbf) Scan(walk func(Record) error) error {
 
 // CalculatedRecordCount returns the calculated RecordCount or -1.
 func (dbf *Dbf) CalculatedRecordCount() int {
-	stat, err := dbf.dbfFile.Stat()
-	if err != nil {
-		return -1
-	}
-	fileSize := int(stat.Size())
+	fileSize := dbf.dbfFile.Len()
 
 	return (fileSize - int(dbf.header.HeaderSize)) / int(dbf.header.RecordLength)
 }

@@ -35,7 +35,7 @@ func (r *simpleRecord) parse() {
 	if r.read {
 		return
 	}
-	r.dbf.dbfFile.Read(r.buffer)
+	r.dbf.dbfFile.ReadAt(r.buffer, int64(r.dbf.header.HeaderSize)+int64(r.recno)*int64(r.dbf.header.RecordLength))
 
 	r.read = true
 }
@@ -129,7 +129,7 @@ func (r *nullRecord) parse() {
 	if r.read {
 		return
 	}
-	r.dbf.dbfFile.Read(r.buffer)
+	r.dbf.dbfFile.ReadAt(r.buffer, int64(r.dbf.header.HeaderSize)+int64(r.recno)*int64(r.dbf.header.RecordLength))
 
 	if r.dbf.nullField != nil {
 		if r.dbf.nullField.Length == 1 {

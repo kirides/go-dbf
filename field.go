@@ -36,17 +36,14 @@ type Field struct {
 	NullFieldIndex     int
 }
 
-func readFields(r io.ReadSeeker, decoder *encoding.Decoder) ([]Field, error) {
+func readFields(r io.ReaderAt, decoder *encoding.Decoder) ([]Field, error) {
 	var fields []Field
-	if _, err := r.Seek(32, io.SeekStart); err != nil {
-		return nil, err
-	}
 	buf := make([]byte, 32, 32)
 
 	index := 0
 	nullFieldIndex := -1
 	for {
-		if _, err := r.Read(buf); err != nil {
+		if _, err := r.ReadAt(buf, (int64(index)+1)*32); err != nil {
 			return nil, err
 		}
 		if buf[0] == fieldDescriptorTerminator {
