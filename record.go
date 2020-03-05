@@ -1,12 +1,12 @@
 package dbf
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"math"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -63,6 +63,7 @@ func (r *Record) ToMap() (map[string]interface{}, error) {
 	}
 	m := make(map[string]interface{})
 	trimRight := (r.parseOptions & ParseTrimRight) != 0
+	intBuf := make([]byte, 4, 4)
 
 	for _, f := range r.dbf.fields {
 		// Skip internal columns
@@ -80,11 +81,11 @@ func (r *Record) ToMap() (map[string]interface{}, error) {
 		case 'I':
 			m[f.Name] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
 		case 'C':
-			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			v, _ := r.dbf.decoder.Bytes(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
 			if trimRight {
-				v = strings.TrimRight(v, " ")
+				v = bytes.TrimRight(v, " ")
 			}
-			m[f.Name] = v
+			m[f.Name] = string(v)
 		case 'D':
 			m[f.Name], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		case 'T':
@@ -112,7 +113,6 @@ func (r *Record) ToMap() (map[string]interface{}, error) {
 			if err != nil {
 				return nil, err
 			}
-			intBuf := make([]byte, 4, 4)
 			_, err = r.memoFile.Read(intBuf)
 			if err != nil {
 				return nil, err
@@ -129,7 +129,8 @@ func (r *Record) ToMap() (map[string]interface{}, error) {
 			if err != nil {
 				return nil, err
 			}
-			m[f.Name], err = r.dbf.decoder.String(string(r.memoBuffer[:memoSize]))
+			v, _ := r.dbf.decoder.Bytes(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
+			m[f.Name] = string(v)
 		}
 	}
 
@@ -144,6 +145,7 @@ func (r *Record) ToSlice() ([]interface{}, error) {
 	}
 	m := make([]interface{}, len(r.dbf.fields))
 	trimRight := (r.parseOptions & ParseTrimRight) != 0
+	intBuf := make([]byte, 4, 4)
 
 	for i, f := range r.dbf.fields {
 		// Skip internal columns
@@ -161,11 +163,11 @@ func (r *Record) ToSlice() ([]interface{}, error) {
 		case 'I':
 			m[i] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
 		case 'C':
-			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			v, _ := r.dbf.decoder.Bytes(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
 			if trimRight {
-				v = strings.TrimRight(v, " ")
+				v = bytes.TrimRight(v, " ")
 			}
-			m[i] = v
+			m[i] = string(v)
 		case 'D':
 			m[i], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		case 'T':
@@ -193,7 +195,6 @@ func (r *Record) ToSlice() ([]interface{}, error) {
 			if err != nil {
 				return nil, err
 			}
-			intBuf := make([]byte, 4, 4)
 			_, err = r.memoFile.Read(intBuf)
 			if err != nil {
 				return nil, err
@@ -210,7 +211,8 @@ func (r *Record) ToSlice() ([]interface{}, error) {
 			if err != nil {
 				return nil, err
 			}
-			m[i], err = r.dbf.decoder.String(string(r.memoBuffer[:memoSize]))
+			v, _ := r.dbf.decoder.Bytes(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
+			m[i] = string(v)
 		}
 	}
 
