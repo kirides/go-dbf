@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type simpleRecord struct {
 	memoFile      *os.File
 	memoBlockSize int64
 	read          bool
+	parseOptions  ParseOption
 }
 
 func (r *simpleRecord) Recno() uint32 {
@@ -56,6 +58,7 @@ func (r *simpleRecord) ToMap() (map[string]interface{}, error) {
 		r.parse()
 	}
 	m := make(map[string]interface{})
+	trimRight := (r.parseOptions & ParseTrimRight) != 0
 
 	for _, f := range r.dbf.fields {
 		// Skip internal columns
@@ -67,7 +70,11 @@ func (r *simpleRecord) ToMap() (map[string]interface{}, error) {
 		case 'I':
 			m[f.Name] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
 		case 'C':
-			m[f.Name], _ = r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			if trimRight {
+				v = strings.TrimRight(v, " ")
+			}
+			m[f.Name] = v
 		case 'D':
 			m[f.Name], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		case 'T':
@@ -147,6 +154,7 @@ func (r *nullRecord) ToMap() (map[string]interface{}, error) {
 		r.parse()
 	}
 	m := make(map[string]interface{})
+	trimRight := (r.parseOptions & ParseTrimRight) != 0
 
 	for _, f := range r.dbf.fields {
 		// Skip internal columns
@@ -164,7 +172,11 @@ func (r *nullRecord) ToMap() (map[string]interface{}, error) {
 		case 'I':
 			m[f.Name] = binary.LittleEndian.Uint32(r.buffer[f.Displacement:])
 		case 'C':
-			m[f.Name], _ = r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			v, _ := r.dbf.decoder.String(string(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]))
+			if trimRight {
+				v = strings.TrimRight(v, " ")
+			}
+			m[f.Name] = v
 		case 'D':
 			m[f.Name], _ = time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		case 'T':

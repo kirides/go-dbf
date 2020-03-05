@@ -149,8 +149,18 @@ func (dbf *Dbf) Header() Header {
 	return dbf.header
 }
 
+// ParseOption options for handling row parsing
+type ParseOption byte
+
+const (
+	// ParseDefault default options
+	ParseDefault ParseOption = 0
+	// ParseTrimRight strings.TrimRight(s, " ") is applied to `C`-type fields
+	ParseTrimRight ParseOption = 1 << 0
+)
+
 // RecordAt reads the record at the specified position
-func (dbf *Dbf) RecordAt(recno uint32, handle func(Record)) error {
+func (dbf *Dbf) RecordAt(recno uint32, handle func(Record), options ParseOption) error {
 	if recno >= dbf.header.RecordCount {
 		return ErrInvalidRecordNumber
 	}
@@ -159,9 +169,10 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(Record)) error {
 	buffer := make([]byte, dbf.header.RecordLength)
 	r := &nullRecord{
 		simpleRecord: simpleRecord{
-			recno:  recno,
-			dbf:    dbf,
-			buffer: buffer,
+			recno:        recno,
+			dbf:          dbf,
+			buffer:       buffer,
+			parseOptions: options,
 		},
 	}
 
@@ -188,15 +199,16 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(Record)) error {
 	return nil
 }
 
-// Scan walks the entire table until the end or walk returns a non nil error
-func (dbf *Dbf) Scan(walk func(Record) error) error {
+// ScanOffset walks the table starting at `offset` until the end or walk returns a non nil error
+func (dbf *Dbf) ScanOffset(offset uint32, walk func(Record) error, options ParseOption) error {
 	var err error
 	buffer := make([]byte, dbf.header.RecordLength)
 	r := &nullRecord{
 		simpleRecord: simpleRecord{
-			recno:  0,
-			dbf:    dbf,
-			buffer: buffer,
+			recno:        0,
+			dbf:          dbf,
+			buffer:       buffer,
+			parseOptions: options,
 		},
 	}
 
@@ -213,9 +225,9 @@ func (dbf *Dbf) Scan(walk func(Record) error) error {
 		r.memoFile.Read(intBuf)
 		r.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
 	}
-	dbf.dbfFile.Seek(int64(dbf.header.HeaderSize), io.SeekStart)
+	dbf.dbfFile.Seek(int64(dbf.header.HeaderSize)+(int64(offset)*int64(dbf.header.RecordLength)), io.SeekStart)
 
-	for i := uint32(0); i < dbf.header.RecordCount; i++ {
+	for i := offset; i < dbf.header.RecordCount; i++ {
 		if err = walk(r); err != nil {
 			break
 		}
@@ -226,6 +238,11 @@ func (dbf *Dbf) Scan(walk func(Record) error) error {
 		r.read = false
 	}
 	return err
+}
+
+// Scan walks the entire table until the end or walk returns a non nil error
+func (dbf *Dbf) Scan(walk func(Record) error, options ParseOption) error {
+	return dbf.ScanOffset(0, walk, options)
 }
 
 // CalculatedRecordCount returns the calculated RecordCount or -1.

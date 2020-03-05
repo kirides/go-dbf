@@ -32,7 +32,7 @@ func ReadDBC(path string, decoder *encoding.Decoder) (*Dbc, error) {
 			}
 		}
 		return nil
-	})
+	}, 0)
 
 	return &Dbc{
 		tables: tables,

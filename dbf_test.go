@@ -30,7 +30,7 @@ func Test_LargeDbf(t *testing.T) {
 			// t.Logf("Record: %v\n", m)
 		}
 		return nil
-	})
+	}, 0)
 	if err != nil {
 		t.FailNow()
 	}
@@ -54,7 +54,7 @@ func Test_RecordAt(t *testing.T) {
 			// m, _ := r.ToMap()
 			// t.Logf("Record: %v\n", m)
 		}
-	})
+	}, 0)
 	if err != nil {
 		t.FailNow()
 	}
