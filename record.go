@@ -165,14 +165,22 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		return julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])), true, nil
 	case 'N':
 		b := r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]
+		idxSpace := bytes.LastIndexByte(b, 32)
+		if idxSpace >= 0 {
+			if idxSpace == int(f.Length-1) {
+				b = b[0:0]
+			} else {
+				b = b[idxSpace+1:]
+			}
+		}
 		if f.DecimalCount == 0 {
-			if b[0] == 32 {
+			if len(b) == 0 {
 				return int64(0), true, nil
 			}
 			v, _ := strconv.ParseInt(string(b), 10, 64)
 			return v, true, nil
 		}
-		if b[0] == 32 {
+		if len(b) == 0 {
 			return float64(0), true, nil
 		}
 		v, _ := strconv.ParseFloat(string(b), 64)
