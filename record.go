@@ -5,26 +5,48 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
-	"os"
 	"strconv"
+	"sync"
 	"time"
 )
+
+var bufferPool = sync.Pool{
+	New: func() interface{} { return make([]byte, 4096) },
+}
+
+func getBuffer(minSize int) []byte {
+	b := bufferPool.Get().([]byte)
+	if len(b) < minSize {
+		b = make([]byte, minSize)
+	}
+
+	return b
+}
+func putBuffer(b []byte) {
+	bufferPool.Put(b)
+}
 
 // Record provides methods to work with record
 type Record struct {
 	recno   uint32
 	deleted bool
 
-	buffer        []byte
-	memoBuffer    []byte
-	dbf           *Dbf
-	memoFile      *os.File
-	memoBlockSize int64
-	read          bool
-	parseOptions  ParseOption
+	buffer       []byte
+	dbf          *Dbf
+	read         bool
+	parseOptions ParseOption
 
 	nullFlags uint64
 	intBuf    [4]byte
+}
+
+func newRecord(dbf *Dbf, recno uint32, parseOptions ParseOption) *Record {
+	return &Record{
+		recno:        recno,
+		dbf:          dbf,
+		buffer:       getBuffer(int(dbf.header.RecordLength)),
+		parseOptions: parseOptions,
+	}
 }
 
 // Deleted returns a bool that tells if a record is marked as deleted or not
@@ -45,7 +67,7 @@ func (r *Record) parse() {
 	if r.read {
 		return
 	}
-	r.dbf.dbfFile.Read(r.buffer)
+	r.dbf.dbfFile.Read(r.buffer[:r.dbf.header.RecordLength])
 
 	if r.dbf.nullField != nil {
 		if r.dbf.nullField.Length == 1 {
@@ -122,24 +144,38 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 	trimRight := (r.parseOptions & ParseTrimRight) != 0
 	switch f.Type {
 	case 'I':
-		return binary.LittleEndian.Uint32(r.buffer[f.Displacement:]), true, nil
+		return binary.LittleEndian.Uint32(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]), true, nil
 	case 'C':
-		v, _ := r.dbf.decoder.Bytes(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
+		tBuf := getBuffer(int(f.Length) * 4)
+		defer func() {
+			putBuffer(tBuf)
+		}()
+		nDst, _, _ := r.dbf.decoder.Transform(tBuf, r.buffer[f.Displacement:f.Displacement+uint32(f.Length)], true)
+
+		v := tBuf[:nDst]
 		if trimRight {
 			v = bytes.TrimRight(v, " ")
 		}
-		return string(v), true, nil
+		vs := string(v)
+		return vs, true, nil
 	case 'D':
 		v, _ := time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		return v, true, nil
 	case 'T':
-		return julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement:])), true, nil
+		return julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])), true, nil
 	case 'N':
+		b := r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]
 		if f.DecimalCount == 0 {
-			v, _ := strconv.ParseInt(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 10, 64)
+			if b[0] == 32 {
+				return int64(0), true, nil
+			}
+			v, _ := strconv.ParseInt(string(b), 10, 64)
 			return v, true, nil
 		}
-		v, _ := strconv.ParseFloat(string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]), 64)
+		if b[0] == 32 {
+			return float64(0), true, nil
+		}
+		v, _ := strconv.ParseFloat(string(b), 64)
 		return v, true, nil
 	case 'L':
 		v := r.buffer[f.Displacement]
@@ -152,11 +188,11 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		if offset == 0 {
 			return "", true, nil
 		}
-		_, err := r.memoFile.Seek(4+int64(offset)*r.memoBlockSize, io.SeekStart)
+		_, err := r.dbf.memoFile.Seek(4+int64(offset)*r.dbf.memoBlockSize, io.SeekStart)
 		if err != nil {
 			return nil, false, err
 		}
-		_, err = r.memoFile.Read(r.intBuf[:])
+		_, err = r.dbf.memoFile.Read(r.intBuf[:])
 		if err != nil {
 			return nil, false, err
 		}
@@ -164,15 +200,20 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		if memoSize == 0 {
 			return "", true, nil
 		}
-		if len(r.memoBuffer) < memoSize {
-			r.memoBuffer = make([]byte, memoSize, memoSize)
-		}
-		_, err = r.memoFile.Read(r.memoBuffer[:memoSize])
+		memoBuffer := getBuffer(memoSize)
+		tMemoBuffer := getBuffer(memoSize * 13 / 10)
+		defer func() {
+			putBuffer(memoBuffer)
+			putBuffer(tMemoBuffer)
+		}()
+		_, err = r.dbf.memoFile.Read(memoBuffer[:memoSize])
 		if err != nil {
 			return nil, false, err
 		}
-		v, _ := r.dbf.decoder.Bytes(r.memoBuffer[:memoSize])
-		return string(v), true, nil
+		nDst, _, _ := r.dbf.decoder.Transform(tMemoBuffer, memoBuffer[:memoSize], true)
+		v := tMemoBuffer[:nDst]
+		vs := string(v)
+		return vs, true, nil
 	}
 	return nil, false, nil
 }

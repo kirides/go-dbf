@@ -20,10 +20,11 @@ var ErrInvalidRecordNumber = errors.New("Invalid record")
 
 // Dbf provides methods to access a DBF
 type Dbf struct {
-	recpointer int32
-	dbfFile    *os.File
-	memoFile   string
-	decoder    *encoding.Decoder
+	recpointer    int32
+	dbfFile       *os.File
+	memoFile      *os.File
+	memoBlockSize int64
+	decoder       *encoding.Decoder
 
 	header    Header
 	fields    []Field
@@ -47,6 +48,7 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 
 	fields, err := readFields(dbfFile, decoder)
 	if err != nil {
+		dbfFile.Close()
 		return nil, fmt.Errorf("Could not read field structure. %w", err)
 	}
 
@@ -83,7 +85,23 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 		memoFile := filepath.Base(path)
 		memoFile = memoFile[:strings.LastIndex(memoFile, ".")] + memoExt
 
-		dbf.memoFile = filepath.Join(filepath.Dir(path), memoFile)
+		memoFile = filepath.Join(filepath.Dir(path), memoFile)
+
+		if memoFile != "" {
+			dbf.memoFile, err = os.Open(memoFile)
+			if err != nil {
+				dbfFile.Close()
+				return nil, err
+			}
+			if _, err := dbf.memoFile.Seek(6, io.SeekStart); err != nil {
+				dbfFile.Close()
+				dbf.memoFile.Close()
+				return nil, err
+			}
+			intBuf := make([]byte, 2, 2)
+			dbf.memoFile.Read(intBuf)
+			dbf.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
+		}
 	}
 	return &dbf, nil
 }
@@ -135,13 +153,18 @@ func (dbf *Dbf) ReadFromDBC(db *Dbc) error {
 	return nil
 }
 
-func (dbf *Dbf) openMemo() (*os.File, error) {
-	return os.Open(dbf.memoFile)
-}
-
-// Close closes the underlying DBF
+// Close closes the underlying DBF/FPT
 func (dbf *Dbf) Close() error {
-	return dbf.dbfFile.Close()
+	if dbf.dbfFile != nil {
+		dbf.dbfFile.Close()
+		dbf.dbfFile = nil
+	}
+	if dbf.memoFile != nil {
+		dbf.memoFile.Close()
+		dbf.memoFile = nil
+	}
+
+	return nil
 }
 
 // Header returns the DBF header
@@ -166,73 +189,35 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(*Record), options ParseOption
 	}
 
 	var err error
-	buffer := make([]byte, dbf.header.RecordLength)
-	r := &Record{
-		recno:        recno,
-		dbf:          dbf,
-		buffer:       buffer,
-		parseOptions: options,
-	}
+	r := newRecord(dbf, recno, options)
 
-	if dbf.memoFile != "" {
-		r.memoFile, err = dbf.openMemo()
-		if err != nil {
-			return fmt.Errorf("Could not open memo file %q. %w", dbf.memoFile, err)
-		}
-		defer r.memoFile.Close()
-		if _, err := r.memoFile.Seek(6, io.SeekStart); err != nil {
-			return fmt.Errorf("Invalid memo table size. %w", err)
-		}
-		intBuf := make([]byte, 2, 2)
-		if _, err := r.memoFile.Read(intBuf); err != nil {
-			return fmt.Errorf("Could not read memo blocksize. %w", err)
-		}
-		r.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
-	}
 	_, err = dbf.dbfFile.Seek(int64(dbf.header.HeaderSize)+(int64(dbf.header.RecordLength)*int64(recno)), io.SeekStart)
 	if err != nil {
 		return fmt.Errorf("Invalid record pointer. %w", err)
 	}
 	handle(r)
+	putBuffer(r.buffer)
 	return nil
 }
 
 // ScanOffset walks the table starting at `offset` until the end or walk returns a non nil error
 func (dbf *Dbf) ScanOffset(offset uint32, walk func(*Record) error, options ParseOption) error {
 	var err error
-	buffer := make([]byte, dbf.header.RecordLength)
-	r := &Record{
-		recno:        0,
-		dbf:          dbf,
-		buffer:       buffer,
-		parseOptions: options,
-	}
+	r := newRecord(dbf, offset, options)
 
-	if dbf.memoFile != "" {
-		r.memoFile, err = dbf.openMemo()
-		if err != nil {
-			return err
-		}
-		defer r.memoFile.Close()
-		if _, err := r.memoFile.Seek(6, io.SeekStart); err != nil {
-			return err
-		}
-		intBuf := make([]byte, 2, 2)
-		r.memoFile.Read(intBuf)
-		r.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
-	}
 	dbf.dbfFile.Seek(int64(dbf.header.HeaderSize)+(int64(offset)*int64(dbf.header.RecordLength)), io.SeekStart)
 
 	for i := offset; i < dbf.header.RecordCount; i++ {
+		r.recno = i
 		if err = walk(r); err != nil {
 			break
 		}
 		if !r.read {
 			dbf.dbfFile.Seek(int64(dbf.header.RecordLength), io.SeekCurrent)
 		}
-		r.recno = i
 		r.read = false
 	}
+	putBuffer(r.buffer)
 	return err
 }
 
