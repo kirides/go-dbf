@@ -17,18 +17,54 @@ func ReadDBC(path string, decoder *encoding.Decoder) (*Dbc, error) {
 	tables := make(map[string][]string)
 	tablesByID := make(map[uint32]string)
 
+	objTypeField, err := dbcDbf.FieldByName("OBJECTTYPE")
+	if err != nil {
+		return nil, err
+	}
+	objIDField, err := dbcDbf.FieldByName("OBJECTID")
+	if err != nil {
+		return nil, err
+	}
+	parentIDField, err := dbcDbf.FieldByName("PARENTID")
+	if err != nil {
+		return nil, err
+	}
+	objNameField, err := dbcDbf.FieldByName("OBJECTNAME")
+	if err != nil {
+		return nil, err
+	}
+
 	dbcDbf.Scan(func(r *Record) error {
 		if !r.Deleted() {
-			m, err := r.ToMap()
+			oType, err := r.FieldAt(objTypeField.Index)
+
 			if err != nil {
 				return err
 			}
-			if m["OBJECTTYPE"].(string) == "Table     " {
-				tablesByID[m["OBJECTID"].(uint32)] = strings.ToUpper(strings.TrimSpace(m["OBJECTNAME"].(string)))
-			} else if m["OBJECTTYPE"].(string) == "Field     " {
-				parentID := m["PARENTID"].(uint32)
-				parentName := tablesByID[parentID]
-				tables[parentName] = append(tables[parentName], strings.ToUpper(strings.TrimSpace(m["OBJECTNAME"].(string))))
+
+			if oType.(string) == "Table     " {
+				oID, err := r.FieldAt(objIDField.Index)
+				if err != nil {
+					return err
+				}
+				oName, err := r.FieldAt(objNameField.Index)
+				if err != nil {
+					return err
+				}
+				tablesByID[oID.(uint32)] = strings.ToUpper(strings.TrimSpace(oName.(string)))
+			} else if oType.(string) == "Field     " {
+				parentID, err := r.FieldAt(parentIDField.Index)
+
+				if err != nil {
+					return err
+				}
+				parentName := tablesByID[parentID.(uint32)]
+
+				oName, err := r.FieldAt(objNameField.Index)
+				if err != nil {
+					return err
+				}
+				tables[parentName] = append(tables[parentName], strings.ToUpper(strings.TrimSpace(oName.(string))))
 			}
 		}
 		return nil

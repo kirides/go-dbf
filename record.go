@@ -3,11 +3,14 @@ package dbf
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
 	"sync"
 	"time"
+
+	"go4.org/strutil"
 )
 
 var bufferPool = sync.Pool{
@@ -24,6 +27,22 @@ func getBuffer(minSize int) []byte {
 }
 func putBuffer(b []byte) {
 	bufferPool.Put(b)
+}
+
+var sBufferPool = sync.Pool{
+	New: func() interface{} { return make([]interface{}, 20) },
+}
+
+func getSliceBuffer(minSize int) []interface{} {
+	b := sBufferPool.Get().([]interface{})
+	if len(b) < minSize {
+		b = make([]interface{}, minSize)
+	}
+
+	return b
+}
+func putSliceBuffer(b []interface{}) {
+	sBufferPool.Put(b)
 }
 
 // Record provides methods to work with record
@@ -109,6 +128,45 @@ func (r *Record) ToMap() (map[string]interface{}, error) {
 	return m, nil
 }
 
+// FieldAt returns a value for that specific field
+func (r *Record) FieldAt(fieldIndex int) (interface{}, error) {
+	if !r.read {
+		r.parse()
+	}
+	if fieldIndex < 0 || fieldIndex >= len(r.dbf.fields) {
+		return nil, fmt.Errorf("FieldAt: Index out of range")
+	}
+
+	v, ok, err := r.parseField(&r.dbf.fields[fieldIndex])
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return v, nil
+	}
+	return nil, fmt.Errorf("FieldAt: Error parsing value")
+}
+
+// Field returns a value for that specific field
+func (r *Record) Field(fieldName string) (interface{}, error) {
+	if !r.read {
+		r.parse()
+	}
+	for i := 0; i < len(r.dbf.fields); i++ {
+		if r.dbf.fields[i].Name == fieldName {
+			v, ok, err := r.parseField(&r.dbf.fields[i])
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				return v, nil
+			}
+			break
+		}
+	}
+	return nil, fmt.Errorf("Field not found %s", fieldName)
+}
+
 // ToSlice parses the record into a []interface{}
 func (r *Record) ToSlice() ([]interface{}, error) {
 	if !r.read {
@@ -139,6 +197,41 @@ func (r *Record) ToSlice() ([]interface{}, error) {
 	return m, nil
 }
 
+// WithSlice parses the record into a []interface{}
+// The slice is only valid within the current Scan
+func (r *Record) WithSlice(sf func([]interface{})) error {
+	if !r.read {
+		r.parse()
+	}
+	m := getSliceBuffer(len(r.dbf.fields))
+	defer func() {
+		putSliceBuffer(m)
+	}()
+	for i, f := range r.dbf.fields {
+		// Skip internal columns
+		if (f.Flags & FieldFlagSystem) != 0 {
+			continue
+		}
+		if f.NullFieldIndex != -1 {
+			if (r.nullFlags & (1 << f.NullFieldIndex)) != 0 {
+				m[i] = nil
+				continue
+			}
+		}
+		v, ok, err := r.parseField(&f)
+		if err != nil {
+			return err
+		}
+		if ok {
+			m[i] = v
+		} else {
+			m[i] = nil
+		}
+	}
+	sf(m[:len(r.dbf.fields)])
+	return nil
+}
+
 func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 
 	trimRight := (r.parseOptions & ParseTrimRight) != 0
@@ -156,10 +249,10 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		if trimRight {
 			v = bytes.TrimRight(v, " ")
 		}
-		vs := string(v)
-		return vs, true, nil
+		return string(v), true, nil
 	case 'D':
-		v, _ := time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
+		v, _ := parseDateBytesYYYYMMDD(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])
+		// v, _ := time.Parse("20060102", string(r.buffer[f.Displacement:f.Displacement+uint32(f.Length)]))
 		return v, true, nil
 	case 'T':
 		return julianDateTimeToTime(binary.LittleEndian.Uint64(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)])), true, nil
@@ -177,8 +270,8 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 			if len(b) == 0 {
 				return int64(0), true, nil
 			}
-			v, _ := strconv.ParseInt(string(b), 10, 64)
-			return v, true, nil
+			v, _ := strutil.ParseUintBytes(b, 10, 64)
+			return int64(v), true, nil
 		}
 		if len(b) == 0 {
 			return float64(0), true, nil
@@ -220,8 +313,7 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		}
 		nDst, _, _ := r.dbf.decoder.Transform(tMemoBuffer, memoBuffer[:memoSize], true)
 		v := tMemoBuffer[:nDst]
-		vs := string(v)
-		return vs, true, nil
+		return string(v), true, nil
 	}
 	return nil, false, nil
 }
@@ -263,4 +355,13 @@ func julianDateTimeToTime(dateTime uint64) time.Time {
 	sec := t / 1000
 
 	return time.Date(int(j), time.Month(int(m)), int(d), hour, min, sec, 0, time.Local)
+}
+
+// parseDateBytesYYYYMMDD parses a simple yyyyMMdd format into local-time time.Time
+// https://stackoverflow.com/a/27217269
+func parseDateBytesYYYYMMDD(date []byte) (time.Time, error) {
+	year := (((int(date[0])-'0')*10+int(date[1])-'0')*10+int(date[2])-'0')*10 + int(date[3]) - '0'
+	month := time.Month((int(date[4])-'0')*10 + int(date[5]) - '0')
+	day := (int(date[6])-'0')*10 + int(date[7]) - '0'
+	return time.Date(year, month, day, 0, 0, 0, 0, time.Local), nil
 }

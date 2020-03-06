@@ -200,6 +200,17 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(*Record), options ParseOption
 	return nil
 }
 
+// FieldByName returns a field by it name (Uppercase!)
+func (dbf *Dbf) FieldByName(name string) (Field, error) {
+
+	for i := 0; i < len(dbf.fields); i++ {
+		if dbf.fields[i].Name == name {
+			return dbf.fields[i], nil
+		}
+	}
+	return Field{}, fmt.Errorf("Field not found %q", name)
+}
+
 // ScanOffset walks the table starting at `offset` until the end or walk returns a non nil error
 func (dbf *Dbf) ScanOffset(offset uint32, walk func(*Record) error, options ParseOption) error {
 	var err error
