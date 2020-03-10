@@ -320,7 +320,7 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 
 var minimumDateTime = time.Date(0001, time.Month(1), 1, 0, 0, 0, 0, time.Local)
 
-// MinimumDateTime returns 0001-01-01T00:00:00Z
+// MinimumDateTime returns 0001-01-01T00:00:00 @ time.Local
 func MinimumDateTime() time.Time {
 	return minimumDateTime
 }
@@ -357,9 +357,14 @@ func julianDateTimeToTime(dateTime uint64) time.Time {
 	return time.Date(int(j), time.Month(int(m)), int(d), hour, min, sec, 0, time.Local)
 }
 
+var emptyDateBytes = []byte{32, 32, 32, 32, 32, 32, 32, 32}
+
 // parseDateBytesYYYYMMDD parses a simple yyyyMMdd format into local-time time.Time
 // https://stackoverflow.com/a/27217269
 func parseDateBytesYYYYMMDD(date []byte) (time.Time, error) {
+	if bytes.Equal(date, emptyDateBytes) {
+		return MinimumDateTime(), nil
+	}
 	year := (((int(date[0])-'0')*10+int(date[1])-'0')*10+int(date[2])-'0')*10 + int(date[3]) - '0'
 	month := time.Month((int(date[4])-'0')*10 + int(date[5]) - '0')
 	day := (int(date[6])-'0')*10 + int(date[7]) - '0'
