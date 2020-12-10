@@ -238,6 +238,24 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 	switch f.Type {
 	case 'I':
 		return binary.LittleEndian.Uint32(r.buffer[f.Displacement : f.Displacement+uint32(f.Length)]), true, nil
+	case 'V':
+		// TODO: properly implement Varchar handling.
+		sizeFlag := (r.nullFlags & (1 << f.VarLengthSizeIndex)) != 0
+		vLen := f.Length
+		if sizeFlag {
+			vLen = r.buffer[int(f.Displacement+(uint32(f.Length-1)))]
+		}
+		tBuf := getBuffer(int(vLen) * 4)
+		defer func() {
+			putBuffer(tBuf)
+		}()
+		nDst, _, _ := r.dbf.decoder.Transform(tBuf, r.buffer[f.Displacement:f.Displacement+uint32(vLen)], true)
+
+		v := tBuf[:nDst]
+		if trimRight {
+			v = bytes.TrimRight(v, " ")
+		}
+		return string(v), true, nil
 	case 'C':
 		tBuf := getBuffer(int(f.Length) * 4)
 		defer func() {

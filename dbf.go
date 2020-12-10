@@ -71,7 +71,7 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 		backlink, _ = decoder.String(string(backlinkBuf[:bytes.IndexByte(backlinkBuf, 0x00)]))
 	}
 
-	dbf := Dbf{
+	dbf := &Dbf{
 		dbfFile:  dbfFile,
 		header:   dbfHeader,
 		fields:   fields,
@@ -117,7 +117,7 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 			dbf.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
 		}
 	}
-	return &dbf, nil
+	return dbf, nil
 }
 
 // DBC returns the DBF's DBC

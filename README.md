@@ -89,6 +89,7 @@ if db.DBC() != "" {
 
 ## Mapped datatypes
 - `C` -> string
+- `V` -> string (basic support, might fail on tables with large amount of nullables and/or varchars)
 - `M` -> string
 - `D` -> time.Time (in local timezone)
 - `T` -> time.Time (in local timezone)
@@ -99,7 +100,6 @@ if db.DBC() != "" {
     - Decimals: float64
 
 ### Currently unsupported datatypes
-- `V` Varchar
 - `G` General (COM)
 - `Q` Binary
 - `B` Double
