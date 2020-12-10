@@ -86,7 +86,7 @@ func (r *Record) parse() {
 	if r.read {
 		return
 	}
-	r.dbf.dbfFile.Read(r.buffer[:r.dbf.header.RecordLength])
+	readAll(r.dbf.dbfFile, r.buffer[:r.dbf.header.RecordLength])
 
 	if r.dbf.nullField != nil {
 		if r.dbf.nullField.Length == 1 {
@@ -293,7 +293,8 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		_, err = r.dbf.memoFile.Read(r.intBuf[:])
+
+		_, err = readAll(r.dbf.memoFile, r.intBuf[:])
 		if err != nil {
 			return nil, false, err
 		}
@@ -307,7 +308,7 @@ func (r *Record) parseField(f *Field) (interface{}, bool, error) {
 			putBuffer(memoBuffer)
 			putBuffer(tMemoBuffer)
 		}()
-		_, err = r.dbf.memoFile.Read(memoBuffer[:memoSize])
+		_, err = readAll(r.dbf.memoFile, memoBuffer[:memoSize])
 		if err != nil {
 			return nil, false, err
 		}

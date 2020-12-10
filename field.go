@@ -46,7 +46,7 @@ func readFields(r io.ReadSeeker, decoder *encoding.Decoder) ([]Field, error) {
 	index := 0
 	nullFieldIndex := -1
 	for {
-		if _, err := r.Read(buf); err != nil {
+		if _, err := readAll(r, buf); err != nil {
 			return nil, err
 		}
 		if buf[0] == fieldDescriptorTerminator {

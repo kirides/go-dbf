@@ -18,11 +18,20 @@ const maxBacklinkLenght = 263
 // ErrInvalidRecordNumber is returned whenever a provided record number is invalid
 var ErrInvalidRecordNumber = errors.New("Invalid record")
 
+type file interface {
+	Close() error
+	Read(b []byte) (int, error)
+	Seek(offset int64, whence int) (int64, error)
+	ReadAt(b []byte, offset int64) (int, error)
+	Name() string
+	Stat() (os.FileInfo, error)
+}
+
 // Dbf provides methods to access a DBF
 type Dbf struct {
 	recpointer    int32
-	dbfFile       *os.File
-	memoFile      *os.File
+	dbfFile       file
+	memoFile      file
 	memoBlockSize int64
 	decoder       *encoding.Decoder
 
@@ -34,11 +43,11 @@ type Dbf struct {
 
 // Open opens the specifid DBF
 func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
-	dbfFile, err := os.Open(path)
+	osF, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-
+	dbfFile := newMmapFile(osF)
 	dbfHeader := Header{}
 
 	if err := binary.Read(dbfFile, binary.LittleEndian, &dbfHeader); err != nil {
@@ -88,18 +97,23 @@ func Open(path string, decoder *encoding.Decoder) (*Dbf, error) {
 		memoFile = filepath.Join(filepath.Dir(path), memoFile)
 
 		if memoFile != "" {
-			dbf.memoFile, err = os.Open(memoFile)
+			osM, err := os.Open(memoFile)
 			if err != nil {
 				dbfFile.Close()
 				return nil, err
 			}
+			dbf.memoFile = newMmapFile(osM)
 			if _, err := dbf.memoFile.Seek(6, io.SeekStart); err != nil {
 				dbfFile.Close()
 				dbf.memoFile.Close()
 				return nil, err
 			}
 			intBuf := make([]byte, 2, 2)
-			dbf.memoFile.Read(intBuf)
+			if _, err := readAll(dbf.memoFile, intBuf); err != nil {
+				dbfFile.Close()
+				dbf.memoFile.Close()
+				return nil, err
+			}
 			dbf.memoBlockSize = int64(binary.BigEndian.Uint16(intBuf))
 		}
 	}
@@ -200,11 +214,11 @@ func (dbf *Dbf) RecordAt(recno uint32, handle func(*Record), options ParseOption
 	return nil
 }
 
-// FieldByName returns a field by it name (Uppercase!)
+// FieldByName returns a field by it name (Case insensitive)
 func (dbf *Dbf) FieldByName(name string) (Field, error) {
 
 	for i := 0; i < len(dbf.fields); i++ {
-		if dbf.fields[i].Name == name {
+		if strings.EqualFold(dbf.fields[i].Name, name) {
 			return dbf.fields[i], nil
 		}
 	}
@@ -246,4 +260,18 @@ func (dbf *Dbf) CalculatedRecordCount() int {
 	fileSize := int(stat.Size())
 
 	return (fileSize - int(dbf.header.HeaderSize)) / int(dbf.header.RecordLength)
+}
+
+// readAll will fill the whole buffer or error out
+func readAll(r io.Reader, b []byte) (int, error) {
+	toRead := len(b)
+	read := 0
+	for read < toRead {
+		n, err := r.Read(b[read:])
+		if err != nil {
+			return read, err
+		}
+		read += n
+	}
+	return read, nil
 }
